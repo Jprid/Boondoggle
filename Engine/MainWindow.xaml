@@ -1,0 +1,87 @@
+﻿<Window x:Class="Engine.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wpf="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="UAP/UFO Photo Analyzer" Height="1080" Width="1200">
+    <Grid>
+        <!-- Top Bar: Image Upload, Location, DateTime, Submit Report -->
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Top" Margin="5">
+            <Button Content="Upload Image" Click="UploadImage_Click" Margin="5" />
+            <TextBox x:Name="LocationInput" Width="150" Margin="5" Text="Enter Location (e.g., Seattle, WA)" />
+            <TextBox x:Name="DateTimeInput" Width="150" Margin="5" Text="Enter DateTime (e.g., 2023-10-01 14:30)" />
+            <Button Content="Submit Report" Click="SubmitReport_Click" Margin="5" />
+        </StackPanel>
+
+        <!-- Main Content Area -->
+        <Grid Margin="0,40,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Image Display with View Mode Selector -->
+            <StackPanel Grid.Column="0" Margin="5">
+                <ComboBox x:Name="ViewModeSelector" SelectionChanged="ViewModeSelector_SelectionChanged" Margin="5">
+                    <ComboBoxItem Content="Original" />
+                    <ComboBoxItem Content="ELA" />
+                    <ComboBoxItem Content="Annotated" />
+                </ComboBox>
+                <Border BorderBrush="Gray" BorderThickness="2" CornerRadius="5" Margin="5">
+                    <Image x:Name="MainImage" MaxHeight="500" Stretch="Uniform" Margin="5" />
+                </Border>
+            </StackPanel>
+
+            <!-- Side Panel: Analysis Results and Interactive Elements -->
+            <ScrollViewer Grid.Column="1" Margin="5">
+                <StackPanel>
+                    <TextBlock Text="EXIF Data" FontWeight="Bold" Margin="0,0,0,5" />
+                    <DataGrid x:Name="ExifDataText" Margin="0,0,0,10" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Tag" Binding="{Binding Tag}"> </DataGridTextColumn>
+                            <DataGridTextColumn Header="Data" Binding="{Binding Data, TargetNullValue='N/A'}"> </DataGridTextColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <DataGrid x:Name="RecognitionResultsTable" AutoGenerateColumns="False" Margin="0,0,0,10"
+                              Height="150">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Feature Type" Binding="{Binding FeatureType}" Width="100" />
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+                            <DataGridTextColumn Header="Confidence"
+                                                Binding="{Binding Confidence, StringFormat={}{0:F2}, TargetNullValue='N/A'}"
+                                                Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- Bottom Panel: Comments and Educational Resources -->
+        <StackPanel VerticalAlignment="Bottom" Margin="5">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                <StackPanel Orientation="Vertical">
+                    <TextBlock Text="Location Map" FontWeight="Bold" Margin="0,0,0,5" />
+                    <wpf:WebView2 x:Name="MapView" Width="200" Height="200" Margin="5" Visibility="Visible" />
+                </StackPanel>
+
+                <TextBlock Text="Sightings Information" FontWeight="Bold" Margin="0,0,0,5" />
+                <TextBlock x:Name="SightingsText" Margin="0,0,0,10" />
+                <Expander Header="Community Comments" Margin="0,0,0,5">
+                    <StackPanel>
+                        <ListBox x:Name="CommentsList" Height="100" Margin="5" />
+                        <TextBox x:Name="NewComment" Margin="5" Width="300" />
+                        <Button Content="Post Comment" Click="PostComment_Click" Margin="5" />
+                    </StackPanel>
+                </Expander>
+                <Expander Header="Educational Resources" Margin="0,0,0,5" Width="200">
+                    <TextBlock Margin="5" TextWrapping="Wrap">
+                        <Run
+                            Text="Learn about UAPs: Unidentified Aerial Phenomena can be natural or man-made objects often mistaken for extraterrestrial crafts. Common misidentifications include weather balloons, drones, and lens flares." />
+                        <LineBreak />
+                        <Run
+                            Text="Photography Tips: Use high-resolution cameras, avoid digital zoom, and capture metadata for authenticity." />
+                    </TextBlock>
+                </Expander>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
