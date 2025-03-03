@@ -25,6 +25,7 @@
                     <ComboBoxItem Content="Original" />
                     <ComboBoxItem Content="ELA" />
                     <ComboBoxItem Content="Annotated" />
+                    <ComboBoxItem Content="Brightness Analyzed" />
                 </ComboBox>
                 <Border BorderBrush="Gray" BorderThickness="2" CornerRadius="5" Margin="5">
                     <Image x:Name="MainImage" MaxHeight="500" Stretch="Uniform" Margin="5" />

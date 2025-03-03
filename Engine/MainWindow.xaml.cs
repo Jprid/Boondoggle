@@ -27,20 +27,28 @@ public partial class MainWindow : Window
     private readonly IMapper _mapper;
     private readonly ICognitiveService _cognitiveServices;
     private readonly IAzureMapsService _azureMapService;
-    private string currentImagePath;
-    private Mat originalImage;
-    private Mat elaImage;
+    private readonly DbContext _dbContext;
+    private readonly IBrightnessAnalyzerService _brightnessAnalyzer;
+    private string _currentImagePath;
+    private Mat _originalImage;
+    private Mat _elaImage;
+    private Mat? _brightnessAnalyzedImage;
     private double latitude;
     private double longitude;
+    private ILogger<MainWindow> _logger;
 
-    public MainWindow(IMapper mapper, ICognitiveService cognitiveServices, IAzureMapsService azureMapService)
+    public MainWindow(IMapper mapper, ICognitiveService cognitiveServices, IAzureMapsService azureMapService,
+        DbContext dbContext, IBrightnessAnalyzerService brightnessAnalyzer, ILogger<MainWindow> logger)
     {
         InitializeComponent();
         ViewModeSelector.SelectedIndex = 0;
-        currentImagePath = string.Empty;
+        _currentImagePath = string.Empty;
         _mapper = mapper;
         _cognitiveServices = cognitiveServices;
         _azureMapService = azureMapService;
+        _dbContext = dbContext;
+        _brightnessAnalyzer = brightnessAnalyzer;
+        _logger = logger;
         InitializeMap();
     }
 
@@ -56,9 +64,9 @@ public partial class MainWindow : Window
         {
             try
             {
-                currentImagePath = dialog.FileName;
-                originalImage = new Mat(currentImagePath);
-                MainImage.Source = BitmapSourceConverter.ToBitmapSource(originalImage);
+                _currentImagePath = dialog.FileName;
+                _originalImage = new Mat(_currentImagePath);
+                MainImage.Source = BitmapSourceConverter.ToBitmapSource(_originalImage);
                 AnalyzeImage();
                 UpdateMap();
                 LoadComments();
@@ -88,11 +96,21 @@ public partial class MainWindow : Window
     // Analyze image (EXIF, ELA, Recognition)
     private async void AnalyzeImage()
     {
-        if (string.IsNullOrEmpty(currentImagePath)) return;
+        if (string.IsNullOrEmpty(_currentImagePath)) return;
 
         ExifDataText.Text = DisplayExifData();
         PerformELA();
         await PerformImageRecognition();
+        AnalyzeBrightness();
+    }
+
+    private void AnalyzeBrightness()
+    {
+        _brightnessAnalyzedImage = _brightnessAnalyzer.AnalyzeBrightness(_currentImagePath, 800, 600, 16);
+        if (_brightnessAnalyzedImage != null)
+        {
+            _logger.LogInformation($"Failed to analyze brightness in image. {_currentImagePath}");
+        }
     }
 
     private async void InitializeMap()
@@ -131,21 +149,18 @@ public partial class MainWindow : Window
     {
         try
         {
-            using (var tempMat = new Mat())
+            // Save at lower quality
+            var tempPath = Path.GetTempFileName() + ".jpg";
+            Cv2.ImWrite(tempPath, _originalImage, new int[] { (int)ImwriteFlags.JpegQuality, 95 });
+
+            using (var recompressed = new Mat(tempPath))
             {
-                // Save at lower quality
-                var tempPath = Path.GetTempFileName() + ".jpg";
-                Cv2.ImWrite(tempPath, originalImage, new int[] { (int)ImwriteFlags.JpegQuality, 95 });
-
-                using (var recompressed = new Mat(tempPath))
-                {
-                    elaImage = new Mat();
-                    Cv2.Absdiff(originalImage, recompressed, elaImage);
-                    Cv2.ConvertScaleAbs(elaImage, elaImage, 10); // Amplify differences
-                }
-
-                File.Delete(tempPath);
+                _elaImage = new Mat();
+                Cv2.Absdiff(_originalImage, recompressed, _elaImage);
+                Cv2.ConvertScaleAbs(_elaImage, _elaImage, 10); // Amplify differences
             }
+
+            File.Delete(tempPath);
         }
         catch (Exception ex)
         {
@@ -165,7 +180,7 @@ public partial class MainWindow : Window
 
         if (result == MessageBoxResult.Yes)
         {
-            var analysisResults = await _cognitiveServices.AnalyzeImageAsync(currentImagePath);
+            var analysisResults = await _cognitiveServices.AnalyzeImageAsync(_currentImagePath);
             RecognitionResultsTable.ItemsSource = analysisResults;
         }
     }
@@ -210,19 +225,23 @@ public partial class MainWindow : Window
     // Handle view mode selection
     private void ViewModeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (originalImage == null) return;
+        if (_originalImage == null) return;
 
         switch (ViewModeSelector.SelectedIndex)
         {
             case 0: // Original
-                MainImage.Source = BitmapSourceConverter.ToBitmapSource(originalImage);
+                MainImage.Source = BitmapSourceConverter.ToBitmapSource(_originalImage);
                 break;
             case 1: // ELA
-                if (elaImage != null)
-                    MainImage.Source = BitmapSourceConverter.ToBitmapSource(elaImage);
+                if (_elaImage != null)
+                    MainImage.Source = BitmapSourceConverter.ToBitmapSource(_elaImage);
                 break;
             case 2: // Annotated (Placeholder)
-                MainImage.Source = BitmapSourceConverter.ToBitmapSource(originalImage); // Placeholder
+                MainImage.Source = BitmapSourceConverter.ToBitmapSource(_originalImage); // Placeholder
+                break;
+            case 3: // BrightnessAnalysis
+                if (_brightnessAnalyzedImage != null)
+                    MainImage.Source = BitmapSourceConverter.ToBitmapSource(_brightnessAnalyzedImage);
                 break;
         }
     }

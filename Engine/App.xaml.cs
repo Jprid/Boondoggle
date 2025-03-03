@@ -59,6 +59,7 @@ public partial class App : Application
         services.AddSingleton<DbContext, DbContext>();
         services.AddSingleton<ICognitiveService, CognitiveService>();
         services.AddSingleton<IAzureMapsService, AzureMapsService>();
+        services.AddSingleton<IBrightnessAnalyzerService, BrightnessAnalyzerService>();
         services.AddSingleton(Configuration);
         // Build service provider
         ServiceProvider = services.BuildServiceProvider();

@@ -1,6 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Data;
 using System.Data.SQLite;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using Engine.Models;
@@ -13,26 +16,35 @@ public class DbContext
 {
     private readonly IConfiguration _configuration;
     private readonly string? _connectionString;
-    private readonly ILogger _logger;
+    private readonly ILogger<DbContext> _logger;
 
-    public DbContext(IConfiguration config, ILogger logger)
+    public DbContext(IConfiguration config, ILogger<DbContext> logger)
     {
         _configuration = config;
         _logger = logger;
         _connectionString = config["SQLite:ConnectionString"];
+        Initialize();
+        ImportCsvToSqlite(@"Data\ufo.csv");
     }
 
-    public async Task InitializeAsync()
+    public void Initialize()
     {
-        using (var conn = new SQLiteConnection(_connectionString))
+        using var conn = new SQLiteConnection(_connectionString);
+        conn.Open();
+        var commands = new[]
         {
-            conn.Open();
-            var commands = new[]
-            {
-                @"CREATE TABLE IF NOT EXISTS ImageTypes (
+            @"CREATE TABLE IF NOT EXISTS ImageTypes (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     TypeName TEXT NOT NULL UNIQUE)",
-                @"CREATE TABLE IF NOT EXISTS Images (
+            @"CREATE TABLE IF NOT EXISTS BlueBook (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    City VARCHAR(50),
+                    ColorsReported VARCHAR(50),
+                    ShapeReported VARCHAR(50),
+                    State VARCHAR(2),
+                    Time TEXT
+                )",
+            @"CREATE TABLE IF NOT EXISTS Images (
                     Id INTEGER NOT NULL,
                     FileName TEXT NOT NULL,
                     UploadDate TEXT NOT NULL,
@@ -42,41 +54,145 @@ public class DbContext
                     ImageData BLOB NOT NULL,
                     PRIMARY KEY (Id, ImageTypeId),
                     FOREIGN KEY (ImageTypeId) REFERENCES ImageTypes(Id) ON DELETE RESTRICT)",
-                @"CREATE TABLE IF NOT EXISTS Reports (
+            @"CREATE TABLE IF NOT EXISTS Reports (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     Title TEXT NOT NULL,
                     Description TEXT,
-                    ReportDate TEXT NOT NULL)",
-                @"CREATE TABLE IF NOT EXISTS ReportImages (
+                    ReportDate TEXT NOT NULL);",
+            @"CREATE TABLE IF NOT EXISTS ReportImages (
                     ReportId INTEGER NOT NULL,
                     ImageId INTEGER NOT NULL,
                     ImageTypeId INTEGER NOT NULL,
                     PRIMARY KEY (ReportId, ImageId, ImageTypeId),
                     FOREIGN KEY (ReportId) REFERENCES Reports(Id) ON DELETE CASCADE,
-                    FOREIGN KEY (ImageId, ImageTypeId) REFERENCES Images(Id, ImageTypeId) ON DELETE CASCADE)",
-                @"CREATE TABLE IF NOT EXISTS Comments (
+                    FOREIGN KEY (ImageId, ImageTypeId) REFERENCES Images(Id, ImageTypeId) ON DELETE CASCADE);",
+            @"CREATE TABLE IF NOT EXISTS Comments (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ReportId INTEGER NOT NULL,
                     CommentText TEXT NOT NULL,
                     CommentDate TEXT NOT NULL,
-                    FOREIGN KEY (ReportId) REFERENCES Reports(Id) ON DELETE CASCADE)"
-            };
+                    FOREIGN KEY (ReportId) REFERENCES Reports(Id) ON DELETE CASCADE);"
+        };
 
-            foreach (var cmdText in commands)
+        foreach (var cmdText in commands)
+        {
+            using var cmd = new SQLiteCommand(cmdText, conn);
+            cmd.ExecuteNonQuery();
+        }
+
+        var seedTypes = @"INSERT OR IGNORE INTO ImageTypes (TypeName) VALUES 
+                ('Original'), ('ELA'), ('Annotated')";
+        using (var cmd = new SQLiteCommand(seedTypes, conn))
+        {
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    void ImportCsvToSqlite(string csvPath)
+    {
+        using var connection = new SQLiteConnection(_connectionString);
+        connection.Open();
+        long count = 0;
+        using (var verifyCmd = new SQLiteCommand("SELECT COUNT(*) FROM main.BlueBook", connection))
+        {
+            count = (long)verifyCmd.ExecuteScalar();
+            Console.WriteLine($"Rows in BlueBook after commit: {count}");
+        }
+
+        if (count > 0)
+        {
+            _logger.LogInformation($"Bluebook sightings already imported. Skipping.");
+            return;
+        }
+
+
+        // Begin transaction for better performance
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            string insertSql = @"
+                        INSERT OR IGNORE INTO main.BlueBook (City, ColorsReported, ShapeReported, State, Time)
+                        VALUES (@City, @ColorsReported, @ShapeReported, @State, @Time);";
+
+            using var command = new SQLiteCommand(insertSql, connection);
+            // Create parameters once
+            command.Parameters.Add("@City", DbType.String);
+            command.Parameters.Add("@ColorsReported", DbType.String);
+            command.Parameters.Add("@ShapeReported", DbType.String);
+            command.Parameters.Add("@State", DbType.String);
+            command.Parameters.Add("@Time", DbType.String);
+            // Read CSV file
+            using var reader = new StreamReader(csvPath);
+            // Skip header if it exists
+            string headerLine = reader.ReadLine();
+
+            // Process data rows
+            string? line;
+            while ((line = reader.ReadLine()) != null)
             {
-                using (var cmd = new SQLiteCommand(cmdText, conn))
+                string[] values = ParseCsvLine(line);
+
+                // Skip if we don't have enough columns
+                if (values.Length < 5)
                 {
-                    cmd.ExecuteNonQuery();
+                    Console.WriteLine($"Skipping invalid row: {line}");
+                    continue;
+                }
+
+                // Set parameter values
+                command.Parameters["@City"].Value = values[0];
+                command.Parameters["@ColorsReported"].Value = values[1];
+                command.Parameters["@ShapeReported"].Value = values[2];
+                command.Parameters["@State"].Value = values[3];
+                command.Parameters["@Time"].Value = values[4];
+                // Execute insert
+                int affected = command.ExecuteNonQuery();
+                if (affected != 1)
+                {
+                    Console.WriteLine($"Unexpected result for row: {line} - Rows affected: {affected}");
                 }
             }
 
-            var seedTypes = @"INSERT OR IGNORE INTO ImageTypes (TypeName) VALUES 
-                ('Original'), ('ELA'), ('Annotated')";
-            using (var cmd = new SQLiteCommand(seedTypes, conn))
+            // Commit the transaction
+            transaction.Commit();
+            Console.WriteLine($"Successfully imported csv to sqlite: {csvPath} - {connection.Changes}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during import: {ex.Message}");
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    // Simple CSV parser that handles quotes
+    private string[] ParseCsvLine(string? line)
+    {
+        var result = new List<string>();
+        bool inQuotes = false;
+        var field = new StringBuilder();
+
+        foreach (char c in line)
+        {
+            if (c == '"')
             {
-                cmd.ExecuteNonQuery();
+                inQuotes = !inQuotes;
+            }
+            else if (c == ',' && !inQuotes)
+            {
+                result.Add(field.ToString().Trim());
+                field.Clear();
+            }
+            else
+            {
+                field.Append(c);
             }
         }
+
+        // Add the last field
+        result.Add(field.ToString().Trim());
+
+        return result.ToArray();
     }
 
     // public async Task<ImageViewModel> GetLatestImageAsync()
